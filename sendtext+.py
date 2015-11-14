@@ -96,6 +96,112 @@ class TextSender:
         cmd = "\n" + cmd
         subprocess.Popen([ahk_path, ahk_script_path, progpath, cmd])
 
+    def _send_chrome_rstudio(self, cmd):
+        cmd = self.clean_cmd(cmd)
+        cmd = self.escape_dquote(cmd)
+        cmd = cmd.replace("\n", r"\n")
+        # use window.desktopHooks.evaluateRCmd once
+        # https://github.com/rstudio/rstudio/commit/3c11a669e7eaae0af40b935fb22cf1bf0e7d6b73
+        # is released.
+        script = """
+        on run argv
+            tell application "Google Chrome"
+                set URL of front window's active tab to "javascript:{" & "
+                    var input = document.getElementById('rstudio_console_input');
+                    var textarea = input.getElementsByTagName('textarea')[0];
+                    textarea.value += \\"" & item 1 of argv & "\\";
+                    var e = document.createEvent('KeyboardEvent');
+                    e.initKeyboardEvent('input');
+                    textarea.dispatchEvent(e);
+                    var e = document.createEvent('KeyboardEvent');
+                    e.initKeyboardEvent('keydown');
+                    Object.defineProperty(e, 'keyCode', {'value' : 13});
+                    input.dispatchEvent(e);
+                " & "}"
+            end tell
+        end run
+        """
+        subprocess.call(['osascript', '-e', script, cmd])
+
+    def _send_safari_rstudio(self, cmd):
+        cmd = self.clean_cmd(cmd)
+        cmd = self.escape_dquote(cmd)
+        cmd = cmd.replace("\n", r"\n")
+        script = """
+        on run argv
+            tell application "Safari"
+                tell front window's current tab to do JavaScript "
+                    var input = document.getElementById('rstudio_console_input');
+                    var textarea = input.getElementsByTagName('textarea')[0];
+                    textarea.value += \\"" & item 1 of argv & "\\";
+                    var e = document.createEvent('KeyboardEvent');
+                    e.initKeyboardEvent('input');
+                    textarea.dispatchEvent(e);
+                    var e = document.createEvent('KeyboardEvent');
+                    e.initKeyboardEvent('keydown');
+                    Object.defineProperty(e, 'keyCode', {'value' : 13});
+                    input.dispatchEvent(e);
+                "
+            end tell
+        end run
+        """
+        subprocess.call(['osascript', '-e', script, cmd])
+
+    def _send_rstudio(self, cmd):
+        cmd = self.clean_cmd(cmd)
+        script = """
+        on run argv
+            tell application "RStudio"
+                cmd item 1 of argv
+            end tell
+        end run
+        """
+        subprocess.call(['osascript', '-e', script, cmd])
+
+    def _send_text_chrome_jupyter(self, cmd):
+        # remove possible ipython code block
+        cmd = re.sub(r"%cpaste\n(.*)\n--", r"\1", cmd, flags=re.S)
+        cmd = self.clean_cmd(cmd)
+        cmd = self.escape_dquote(cmd)
+        cmd = cmd.replace("\n", r"\n")
+        script = """
+        on run argv
+            tell application "Google Chrome"
+                set URL of front window's active tab to "javascript:{" & "
+                    var mycell = IPython.notebook.get_selected_cell();
+                    mycell.set_text(\\"" & item 1 of argv & "\\");
+                    IPython.notebook.scroll_to_cell( IPython.notebook.find_cell_index(mycell));
+                    mycell.execute();
+                    IPython.notebook.insert_cell_below();
+                    IPython.notebook.select_next();
+                " & "}"
+            end tell
+        end run
+        """
+        subprocess.call(['osascript', '-e', script, cmd])
+
+    def _send_text_safari_jupyter(self, cmd):
+        # remove possible ipython code block
+        cmd = re.sub(r"%cpaste\n(.*)\n--", r"\1", cmd, flags=re.S)
+        cmd = self.clean_cmd(cmd)
+        cmd = self.escape_dquote(cmd)
+        cmd = cmd.replace("\n", r"\n")
+        script = """
+        on run argv
+            tell application "Safari"
+                tell front window's current tab to do JavaScript "
+                    var mycell = IPython.notebook.get_selected_cell();
+                    mycell.set_text(\\"" & item 1 of argv & "\\");
+                    IPython.notebook.scroll_to_cell( IPython.notebook.find_cell_index(mycell));
+                    mycell.execute();
+                    IPython.notebook.insert_cell_below();
+                    IPython.notebook.select_next();
+                "
+            end tell
+        end run
+        """
+        subprocess.call(['osascript', '-e', script, cmd])
+
     def _send_text_sublime_repl(self, cmd):
         cmd = self.clean_cmd(cmd)
         window = sublime.active_window()
@@ -103,40 +209,6 @@ class TextSender:
         external_id = view.scope_name(0).split(" ")[0].split(".", 1)[1]
         window.run_command(
             "repl_send", {"external_id": external_id, "text": cmd})
-
-    def _send_text_jupyter(self, cmd):
-        cmd = self.clean_cmd(cmd)
-        cmd = cmd.replace('\\', r'\\\\ '.rstrip(' '))
-        cmd = cmd.replace('"', '\\\\\\\"')
-        cmd = cmd.replace('\n', '\\\\n')
-        script = (u'''
-            tell application "Google Chrome"
-                set cmd to "''' + cmd + '''"
-                repeat with w in windows
-                set i to 0
-                repeat with t in (tabs of w)
-                set i to i + 1
-                if URL of t contains "notebooks" then
-                tell t to set URL to "javascript:{
-                mycell = window.IPython.notebook.insert_cell_below();
-                mycell.set_text(" & quote & cmd & quote & ");
-                IPython.notebook.select_next();
-                IPython.notebook.scroll_to_cell( IPython.notebook.find_cell_index(mycell));
-                mycell.execute()}"
-                exit repeat
-                end if
-                end repeat
-                if URL of t contains "notebooks" then
-                exit repeat
-                end if
-                end repeat
-            end tell
-        ''')
-        proc = subprocess.Popen(['osascript'],
-                                stdin=subprocess.PIPE,
-                                universal_newlines = True)
-        proc.stdin.write(script)
-        proc.stdin.close()
 
     def send_text(self, cmd):
         plat = sublime.platform()
@@ -150,11 +222,23 @@ class TextSender:
         if prog == 'Terminal':
             self._send_text_terminal(cmd)
 
-        if prog == 'Jupyter':
-            self._send_text_jupyter(cmd)
-
         elif prog == 'iTerm':
             self._send_text_iterm(cmd)
+
+        elif prog == "RStudio":
+            self._send_rstudio(cmd)
+
+        elif prog == "Chrome-RStudio":
+            self._send_chrome_rstudio(cmd)
+
+        elif prog == "RStudio":
+            self._send_safari_rstudio(cmd)
+
+        elif prog == 'Chrome-Jupyter':
+            self._send_text_chrome_jupyter(cmd)
+
+        elif prog == 'Safari-Jupyter':
+            self._send_text_safari_jupyter(cmd)
 
         elif prog == "tmux":
             self._send_text_tmux(cmd, sget("tmux", "tmux"))
@@ -255,7 +339,7 @@ class PythonTextGetter(TextGetter):
     def get_text(self):
         cmd = super(PythonTextGetter, self).get_text()
         cmd = cmd.rstrip("\n")
-        if (len(re.findall("\n", cmd))) > 0 and (sget("prog") != 'Jupyter'):
+        if len(re.findall("\n", cmd)) > 0:
             cmd = "%cpaste\n" + cmd + "\n--"
         return cmd
 
@@ -356,7 +440,10 @@ class SendTextPlusChooseProgramCommand(sublime_plugin.WindowCommand):
     def run(self):
         plat = sublime.platform()
         if plat == 'osx':
-            self.app_list = ["Terminal", "iTerm", "tmux", "screen", "SublimeREPL", "Jupyter"]
+            self.app_list = ["Terminal", "iTerm",
+                             "RStudio", "Chrome-RStudio", "Safari-RStudio",
+                             "Chrome-Jupyter", "Safari-Jupyter",
+                             "tmux", "screen", "SublimeREPL"]
         elif plat == "windows":
             self.app_list = ["Cmder", "Cygwin", "SublimeREPL"]
         elif plat == "linux":
