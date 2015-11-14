@@ -13,6 +13,9 @@ def sget(key, default=None):
 
 class TextSender:
 
+    def __init__(self, view):
+        self.view = view
+
     @staticmethod
     def clean_cmd(cmd):
         cmd = cmd.expandtabs(4)
@@ -121,8 +124,10 @@ class TextSender:
                 mycell = window.IPython.notebook.insert_cell_below();
                 mycell.set_text(" & quote & cmd & quote & ");
                 IPython.notebook.select_next();
-                IPython.notebook.scroll_to_cell( IPython.notebook.find_cell_index(mycell));
-                mycell.execute()}"
+                IPython.notebook.scroll_to_cell(IPython.notebook.find_cell_index(mycell));
+                mycell.execute();
+                IPython.notebook.scroll_cell_percent(IPython.notebook.find_cell_index(mycell), 20);
+                IPython.notebook.focus_cell();}"
                 exit repeat
                 end if
                 end repeat
@@ -139,6 +144,7 @@ class TextSender:
         proc.stdin.close()
 
     def send_text(self, cmd):
+        view = self.view
         plat = sublime.platform()
         if plat == "osx":
             prog = sget("prog", "Terminal")
@@ -151,7 +157,11 @@ class TextSender:
             self._send_text_terminal(cmd)
 
         if prog == 'Jupyter':
-            self._send_text_jupyter(cmd)
+            pt = view.sel()[0].begin() if len(view.sel()) > 0 else 0
+            if view.score_selector(pt, "source.r") | view.score_selector(pt, "source.python") | view.score_selector(pt, "source.julia"):
+                self._send_text_jupyter(cmd)
+            else:
+                self._send_text_terminal(cmd)
 
         elif prog == 'iTerm':
             self._send_text_iterm(cmd)
@@ -292,7 +302,7 @@ class SendTextPlusCommand(sublime_plugin.TextCommand):
 
         cmd = getter.get_text()
 
-        sender = TextSender()
+        sender = TextSender(view)
         sender.send_text(cmd)
 
 
@@ -307,7 +317,7 @@ class SendTextPlusChangeDirCommand(sublime_plugin.TextCommand):
 
         dirname = os.path.dirname(fname)
 
-        sender = TextSender()
+        sender = TextSender(view)
 
         pt = view.sel()[0].begin() if len(view.sel()) > 0 else 0
         if view.score_selector(pt, "source.r"):
@@ -329,7 +339,7 @@ class SendTextPlusSourceCodeCommand(sublime_plugin.TextCommand):
             sublime.error_message("Save the file!")
             return
 
-        sender = TextSender()
+        sender = TextSender(view)
 
         pt = view.sel()[0].begin() if len(view.sel()) > 0 else 0
         if view.score_selector(pt, "source.r"):
